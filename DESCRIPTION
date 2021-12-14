@@ -19,3 +19,5 @@ Suggests:
     rmarkdown,
     knitr
 VignetteBuilder: knitr
+URL: https://github.com/d-morrison/ci.ex
+BugReports: https://github.com/d-morrison/ci.ex/issues

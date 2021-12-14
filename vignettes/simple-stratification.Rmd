@@ -1,0 +1,221 @@
+---
+title: "simple-stratification"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{simple-stratification}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+
+library(papeR) # load papeR before dplyr, to avoid masking dplyr::summarize
+library(dplyr)
+library(pander)
+library(purrr)
+
+panderOptions("table.split.table", Inf)
+```
+
+Suppose we have three binary variables, $X$, $Y$, and $Z$.
+
+Let's assume the following potential outcomes model for $Y(x)$, conditional on $Z$:
+$$p(Y(x)=1 | Z=z) = 0.1 + 0.1x + 0.2z + .1xz$$
+```{r}
+
+PO_model = tribble(
+  ~x, ~z,
+  0, 0,
+  0, 1,
+  1, 0,
+  1, 1
+) |> 
+  mutate(
+    `p(Y(x)=1|Z=z)` = 0.1 + 0.1*x + 0.2*z + .1*x*z
+  )
+
+```
+
+This model corresponds to the following table of conditional potential risks:
+
+```{r}
+pander(PO_model)
+```
+
+Now, suppose we collect observational data from the distribution 
+$$p(X=x,Y=y,Z=z) = p(Z=z)\cdot p(X=x |Z = z) \cdot p(Y(x)=y|Z=z)$$ 
+where $p(Z=1) = 1/2$ and $p(X=1|Z=z) = .3 + .4z$.
+
+```{r}
+
+`p(X|Z)` = tribble(
+ ~z, ~`p(X=1|Z=z)`,
+  0, .3,
+  1, .7)
+  
+# pander(`p(X|Z)`)
+
+```
+
+Note that we haven't assumed a causal relationship between Z and X; only an association. We also haven't assumed a causal relationship between Z and Y; we have only assumed that the causal relationship between X and Y depends on Z.
+
+In this population, we have (by Law of Total Probability):
+
+$$p(Y(1)=1) = \sum_{z\in {0,1}} p(Y(1)=1|Z=z)\cdot P(Z=z)$$
+What causal estimands can we reconstruct, and how?
+
+By our consistency assumption,
+
+$$P(Y(x,z)=y) = P(Y=y|X=x,Z=z)$$
+$$P[Y(x)=1] = \sum_{z\in{0,1}}P(Y(x,z)=1$$
+
+```{r}
+
+set.seed(1) # control RNG, for reproducibility
+n = 10^5 # number of participants in study
+
+data1 = tibble(
+  Z = rbernoulli(n = n, p = 0.5),
+  `Y(0)` = rbernoulli(n = n, p = .1 + .2*Z),
+  `Y(1)` = rbernoulli(n = n, p = .1 + .1*1 + .2*Z + .1*1*Z),
+  X = rbernoulli(n = n, p = .3 + .4*Z),
+  Y = if_else(X == 1, `Y(1)`, `Y(0)`)) |> 
+  mutate(across(where(is.logical), as.numeric)) # convert from T/F to 0/1
+
+```
+
+First, let's peek behind the curtain at the potential outcomes, and confirm that our simulation results match our assumed potential outcomes model:
+
+```{r}
+
+data1 |> 
+  group_by(Z) |> 
+  summarize(
+    `E[Y(0)|Z]` = mean(`Y(0)`),
+    `E[Y(1)|Z]` = mean(`Y(1)`)) |> 
+  pander()
+
+```
+
+Furthermore, we can use the potential outcomes to directly estimate the marginal average potential outcomes, $E[Y(0)]$ and $E[Y(1)]$:
+
+```{r}
+
+data1 |> 
+  summarize(
+    `E[Y(0)]` = mean(`Y(0)`),
+    `E[Y(1)]` = mean(`Y(1)`)) |>  
+  mutate(
+    `E[Y(1) - Y(0)]` = `E[Y(1)]` - `E[Y(0)]` 
+  ) |> 
+  pander()
+
+```
+
+With a little probability theory, we can work out that the true marginal average potential outcomes are indeed $E[Y(0)] = 0.2$ and $E[Y(1)] = 0.35$, and thus $E[Y(1) - Y(0)] = 0.15$.
+
+In practice, we wouldn't observe the complete $Y(0)$ and $Y(1)$ vectors; 
+we would only observe $Y$ (and $X$ and $Z$).
+
+If we want to estimate $E[Y(0)]$ and $E[Y(1)]$, what can we do with this observed data?
+
+First, what not to do:
+
+```{r}
+
+data1 |> 
+  summarize(
+    `E[Y|X=0]` = mean(Y[X==0]),
+    `E[Y|X=1]` = mean(Y[X==1])) |>  
+  pander()
+
+```
+
+Comparing this table to the previous one, we can see that $E[Y|X=x] \neq E[Y(x)]$.
+
+## Stratification
+
+First, we could stratify on $Z$, and compute $E[Y|X=x,Z=z]$ for each $x,z$ pair: 
+
+```{r}
+
+strata =
+  data1 |> 
+  group_by(z = Z) |> 
+  summarize(
+    .groups = "drop",
+    `E[Y|X=1,Z=z]` = mean(Y[X==1]),
+    `E[Y|X=0,Z=z]` = mean(Y[X==0]),
+    `E[Y(1) - Y(0)|Z=z]` = `E[Y|X=1,Z=z]` - `E[Y|X=0,Z=z]`,
+    `p(Z=z)` = n()/nrow(data1))
+
+strata |> pander()
+
+```
+
+Here we can see that the conditional means `E[Y|X=x,Z=z]` are approximately equal to the 
+conditional potential outcomes, $E[Y(x)|Z=z]$.
+
+We can compute a weighted average of the stratified estimates `E[Y(1) - Y(0)|Z=z]`, with weights equal to `p(Z=z)`, to 
+estimate the marginal average treatment effect (ATE), `E[Y(1) - Y(0)]`:
+
+```{r}
+
+`E[Y(1) - Y(0)]` = 
+  strata |> 
+  summarize(`E[Y(1) - Y(0)]` = sum(`E[Y(1) - Y(0)|Z=z]` * `p(Z=z)`))
+
+```
+
+## Regression
+
+We can fit a generalized linear model $p(Y=1|X=x,Z=z) = \beta_0+\beta_Xx +\beta_Zz + \beta_{XZ}xz$, like so:
+
+```{r}
+
+glm1 = glm(
+  data = data1, 
+  formula = Y ~ X * Z, 
+  family = binomial(link = "identity"))
+
+glm1 |> 
+  summary() |> 
+  prettify(OR = FALSE) |> 
+  suppressMessages() |> 
+  pander()
+
+```
+
+This model is saturated, so a logistic link would produce a numerically equivalent fit compared to the identity link I'm using here;
+but the identity link is more convenient to work with because the coefficients correspond to risks and risk differences rather than log-odds and log-odds ratios.
+
+If we compare the estimated coefficients to the potential outcomes model that we assumed, $p(Y(x)=1 | Z=z) = 0.1 + 0.1x + 0.2z + .1xz$, we can see that we have approximately recovered the coefficients of that potential outcomes model.
+
+If $p(Y=1|X=x,Z=z) = p(Y(x)=1 | Z=z)$, we can extract estimates of the conditional potential risks from the model; i.e.,
+
+$$\hat E[Y(x)|Z=z] = \hat\beta_0 + \hat\beta_Xx + \hat\beta_Zz + \hat\beta_{XZ}xz$$
+```{r}
+
+`p(Y=1|X=x,Z=z)` = predict(glm1, newdata = PO_model |> rename(X=x,Z=z))
+
+PO_estimates = 
+  
+                            |> 
+  mutate(
+    )
+  )
+
+```
+
+
+And we can consistently estimate the marginal model $p(Y(x)=1)$ by marginalizing the fitted model over the estimated distribution of $Z$:
+$$\hat{p}(Y(x)=1) = \sum_{z\in{0,1}}{\hat{p}(Y(x)=1 | Z=z)}\hat{p}(Z=z)= \sum_{z\in{0,1}}{\hat{p}(Y=1|X=x,Z=z)}\hat{p}(Z=z)$$
+
+$

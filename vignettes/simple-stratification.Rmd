@@ -1,10 +1,11 @@
 ---
 title: "simple-confounding"
-output: rmarkdown::html_vignette
-vignette: >
-  %\VignetteIndexEntry{simple-confounding}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
+output: word_document
+# output: rmarkdown::html_vignette
+# vignette: >
+#   %\VignetteIndexEntry{simple-confounding}
+#   %\VignetteEngine{knitr::rmarkdown}
+#   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r, include = FALSE}
@@ -17,21 +18,24 @@ knitr::opts_chunk$set(
 # A set of assumptions for causal inference
 
 1. Each observation's potential outcomes $Y_i(1)$ and $Y_i(0)$ are independent of other participants' observed exposures
-("non-interference"). Similar to typical i.i.d. assumption; fails e.g. for vaccination effects, due to herd immunity.
+("non-interference"). Similar to typical i.i.d. assumption; fails e.g. for vaccination effects, due to herd immunity. 
+Needed in order to clearly define potential outcomes.
 
 2. Each observed outcome is equal to the potential outcome corresponding to the observed outcome:
 if $X=x$, then $Y = Y(x)$ ("consistency", "no multiple versions of treatment", "well-defined interventions"). 
 Can fail if treatment is imprecisely defined; e.g., "effect of heart transplant".
 
 3. The potential outcomes are each statistically independent of the observed treatment, given some vector of observed covariates $Z$: 
-$\forall x: Y(x) \perp X |Z$ ("ignorability", "conditional exchangeability", "no uncontrolled confounding"). This assumption holds automatically
-if we randomize $X$, which is why randomized controlled trials are considered reliable sources of evidence.
+$\forall x: Y(x) \perp X |Z$ ("ignorability", "conditional exchangeability", "no uncontrolled confounding"). This assumption holds automatically (for any $Z$) if we randomize $X$, which is why randomized controlled trials are considered reliable sources of evidence.
 
-4. The probability of treatment 
+4. The probabilities of each treatment option (value of $X$) must be nonzero for every value of $Z$ with nonzero density: 
+$P(X=x|Z=z) \forall x,\forall z:p(Z=z)>0$ ("positivity"). This assumption ensures that we observe at least some of each potential outcome
+for every possible value of $Z$, so that we can use those potential outcomes to impute the missing counterfactual outcomes.
+
 The first two assumptions are sometimes jointly referred to as the "Stable Unit Treatment Value Assumption" (SUTVA).
 
-These three assumptions are sufficient for causal inference, but they aren't always necessary! 
-However, they are very commonly used, because they are very helpful. Specifically:
+These four assumptions are sufficient for causal inference, but they aren't always necessary! 
+However, they are very commonly used, because they are very helpful. In particular:
 
 Assumption 2 entails that $E[Y(x)|X=x,Z=z] = E[Y|X=x,Z=z]$; thus it allows us to infer 
 the conditional expectation of the potential outcome $Y(x)$ from the conditional expectation of the observed outcome $Y$,
@@ -45,7 +49,8 @@ Thus, Assumptions 2 and 3 combined give us the following key result:
 $$E[Y(x)|Z=z]= E[Y|X=x,Z=z]$$
 This result says that if our assumptions are correct, we can accurately estimate 
 the conditional distributions of the potential outcomes from the conditional 
-distributions of the observed outcomes.
+distributions of the observed outcomes. In particular, we can impute the missing
+counterfactual outcomes using observed outcomes from the same $Z$ stratum.
 
 Let's see what we can do with that result.
 
@@ -85,7 +90,7 @@ This model entails the following table of conditional potential risks:
 
 library(dplyr) # convenient data-manipulation functions
 library(pander) # table formatting functions
-library(purrr)
+library(purrr) # rbernoulli()
 panderOptions("table.split.table", Inf) # make sure wide tables don't get split up
 
 PO_model = tribble(
@@ -125,8 +130,8 @@ don't depend on $X$, given $Z$; thus, our data-generating model satisfies ignora
 data1 = 
   data1 |> 
   mutate(
-  `Y(0)` = rbernoulli(n = n, p = .1 + .2*Z),
-  `Y(1)` = rbernoulli(n = n, p = .1 + .1*1 + .2*Z + .1*1*Z))
+    `Y(0)` = rbernoulli(n = n, p = .1 + .2*Z),
+    `Y(1)` = rbernoulli(n = n, p = .1 + .1*1 + .2*Z + .1*1*Z))
 
 ```
 
@@ -136,8 +141,8 @@ Next, we'll simulate $X$, and use $X$ to determine which potential outcome becom
 
 data1 = data1 |> 
   mutate(
-  X = rbernoulli(n = n, p = .3 + .4*Z),
-  Y = if_else(X == 1, `Y(1)`, `Y(0)`)) |> 
+    X = rbernoulli(n = n, p = .3 + .4*Z),
+    Y = if_else(X == 1, `Y(1)`, `Y(0)`)) |> 
   mutate(across(where(is.logical), as.numeric)) # convert from TRUE/FALSE to 0/1 representations, for convenience
 
 ```
@@ -191,7 +196,7 @@ data1 |>
     `E[Y|X=1]` = mean(Y[X==1])) |> 
   mutate(
     `E[Y|X=1] - E[Y|X=0]` = `E[Y|X=1]` - `E[Y|X=0]`
-    ) |>  
+  ) |>  
   pander()
 
 ```
@@ -234,7 +239,7 @@ PO_estimates =
   mutate(
     `p(Y=1|X=x,Z=z)` = beta[1] + beta[2]*x + beta[3]*z + beta[4]*x*z
     # more generally: `p(Y=1|X=x,Z=z)` = predict(glm1, newdata = tibble(X=x,Z=z), type = "response")
-    ) 
+  ) 
 
 pander(PO_estimates)
 
@@ -278,10 +283,10 @@ PO_estimates |>
     `E[Y(1)-Y(0)|Z=z]` = `p(Y=1|X=x,Z=z)`[x==1] - `p(Y=1|X=x,Z=z)`[x == 0]
   ) |> 
   mutate(
-   `p(Z=z|X=1)` = if_else(z == 1, `p(Z=1|X=1)`, 1-`p(Z=1|X=1)`)
+    `p(Z=z|X=1)` = if_else(z == 1, `p(Z=1|X=1)`, 1-`p(Z=1|X=1)`)
   ) |> 
   summarize(
-     `E[Y(1)-Y(0)|X=1]` =  sum(`E[Y(1)-Y(0)|Z=z]` * `p(Z=z|X=1)`) 
+    `E[Y(1)-Y(0)|X=1]` =  sum(`E[Y(1)-Y(0)|Z=z]` * `p(Z=z|X=1)`) 
   ) |> 
   pander()
 
@@ -349,7 +354,7 @@ We also don't need to use a saturated regression model; for example, if we are c
 
 ## Propensity scores
 
-Sometimes, it may be easier to fit a model for $p(X=x|Z=z)$ than a model for $p(Y=y|X=x,Z=z)$, for example if the functional form of $p(X=x|Z=z)$ is simpler or better-understood from prior research. In such cases, we can use $p(X=x|Z=z)$, which we call the "propensity score" (i.e., propensity of treatment score), to estimate causal effects. There are several ways to use propensity scores, including regression adjustment, matching, and weighting. Here I'll demonstrate weighting adjustment: we can estimate $p(X=x|Z=z)$ and then regress $Y$ on $X$ with weights equal to $1/\hat p(X=x|Z=z)$:
+Sometimes, it may be easier to fit a model for $p(X=x|Z=z)$ than a model for $p(Y=y|X=x,Z=z)$, for example if the functional form of $p(X=x|Z=z)$ is simpler or better-understood from prior research. In such cases, we can use $p(X=x|Z=z)$, which we call the "propensity score" (i.e., propensity of treatment score), to estimate causal effects. There are several ways to use propensity scores, including regression adjustment, matching, and weighting. Here I'll demonstrate stratification adjustment: we can estimate the propensity score $p(X=1|Z=z)$ and stratify on a discretization of this score, instead of stratifying on $Z$. In this case, since $Z$ is binary, there will only be two values of the propensity score, so no further discretization is needed:
 
 ```{r}
 
@@ -360,37 +365,23 @@ PS_model = glm(
 
 data1 =
   data1 |> 
-  mutate(PS = predict(PS_model, newdata = tibble(Z), type = "response"))
-
-glm4 = glm(
-  data = data1,
-  family = quasibinomial(link = "identity"), # need quasibinomial for weights
-  Y ~ X,
-  weights = 1/PS
-)
-
-glm4 |> summary() |>  coef() |>  pander()
-
-
-```
-
-```{r}
+  mutate(S = predict(PS_model, newdata = tibble(Z), type = "response"))
 
 PS_strata =
   data1 |> 
-  group_by(PS) |> 
+  group_by(s = S) |> 
   summarize(
     .groups = "drop",
-    `E[Y|X=1,PS=s]` = mean(Y[X==1]),
-    `E[Y|X=0,PS=s]` = mean(Y[X==0]),
-    `E[Y(1) - Y(0)|PS=s]` = `E[Y|X=1,PS=s]` - `E[Y|X=0,PS=s]`,
-    `p(PS=s)` = n()/nrow(data1))
+    `E[Y|X=1,S=s]` = mean(Y[X==1]),
+    `E[Y|X=0,S=s]` = mean(Y[X==0]),
+    `E[Y(1) - Y(0)|S=s]` = `E[Y|X=1,S=s]` - `E[Y|X=0,S=s]`,
+    `p(S=s)` = n()/nrow(data1))
 
 PS_strata |> pander()
 
 ```
 
-Here we can see that the conditional means `E[Y|X=x,Z=z]` are approximately equal to the 
+Here we can see that the conditional means `E[Y|X=x,PS=s]` are approximately equal to the 
 conditional potential outcomes, $E[Y(x)|Z=z]$.
 
 Analogously to when we stratified on $Z$, we can average the stratum-specific effect estimates, 
@@ -401,10 +392,28 @@ average treatment effect `E[Y(1) - Y(0)]`:
 
 `E[Y(1) - Y(0)]` = 
   PS_strata |> 
-  summarize(`E[Y(1) - Y(0)]` = sum(`E[Y(1) - Y(0)|PS=s]` * `p(PS=s)`)) |> 
+  summarize(`E[Y(1) - Y(0)]` = sum(`E[Y(1) - Y(0)|S=s]` * `p(S=s)`)) |> 
   pander()
 
 
 ```
 
 The result is again very close to the underlying "true" ATE derived by our data-generating model, $E[Y(1) - Y(0)] = 0.15$.
+
+Propensity scores can also be used in other ways, such as matching or weighting; these options will be discussed in the third session of this series.
+
+
+Data-generation condensed:
+```{r}
+set.seed(1) # control RNG, for reproducibility
+n = 10^6 # number of observations in simulated data set; made large to see asymptotic results
+data1 = tibble(
+  Z = rbernoulli(n = n, p = 0.5),
+  `Y(0)` = rbernoulli(n = n, p = .1 + .2*Z),
+  `Y(1)` = rbernoulli(n = n, p = .2 + .3*Z),
+  X = rbernoulli(n = n, p = .3 + .4*Z),
+  Y = if_else(X == 1, `Y(1)`, `Y(0)`))
+
+```
+
+

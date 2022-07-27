@@ -402,8 +402,54 @@ The result is again very close to the underlying "true" ATE derived by our data-
 
 Propensity scores can also be used in other ways, such as matching or weighting; these options will be discussed in the third session of this series.
 
+Here is an example of weighting: 
 
-Data-generation condensed:
+```{r}
+
+data1 =
+  data1 |> 
+  mutate(
+    `P(X=1|Z)` = predict(PS_model, newdata = data.frame(Z = Z), type = 'response'),
+    `p(X=x|Z=z)` = if_else(X==1, `P(X=1|Z)`, 1 - `P(X=1|Z)`),
+    wt = 1/`p(X=x|Z=z)`
+  )
+
+glm2 = glm(
+  data = data1, 
+  formula = Y ~ X,
+  weight = wt,
+  family = binomial(link = "identity"))
+
+glm2 |> summary() |> coef() |> pander()
+
+```
+
+Again we have approximately recovered the marginal effect of X on Y.
+
+We could also use the propensity score as a covariate:
+
+```{r}
+
+glm3 = glm(
+  data = data1,
+  formula = Y ~ X * `P(X=1|Z)`,
+  family = binomial(link = "identity")
+)
+
+Y1 = glm3 |> predict(newdata = data1 |> mutate(X = 1), type = "response")
+Y0 = glm3 |> predict(newdata = data1 |> mutate(X = 0), type = "response")
+
+tibble(
+  `E[Y(0)]` = mean(Y0), 
+  `E[Y(1)]` = mean(Y1), 
+  `E[Y(1)-Y(0)]` = mean(Y1 - Y0)
+) |> pander()
+
+```
+
+Note that the coefficients of `glm3` look strange, because `P(X=1|Z)` is being treated as numeric and is not on the same scale as `Z`.
+
+## Data-generation condensed:
 ```{r}
 set.seed(1) # control RNG, for reproducibility
 n = 10^6 # number of observations in simulated data set; made large to see asymptotic results

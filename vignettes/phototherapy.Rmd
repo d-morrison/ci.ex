@@ -1,0 +1,100 @@
+---
+title: "phototherapy"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{phototherapy}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+rm(list = ls())
+# library(ci.ex)
+library(tidyverse)
+library(magrittr)
+library(haven)
+library(papeR)
+```
+
+```{r}
+
+d1 = haven::read_dta("inst/extdata/phototherapy.dta") |> 
+  mutate(across(where(is.labelled), as_factor))
+
+
+d1 %<>% mutate(
+  pt = phototherapy == "yes",
+  ga_over37 = !(gest_age %in% 35:37)
+)
+
+ps1 = glm(
+  data = d1,
+  family = binomial,
+  phototherapy ~ factor(qual_TSB)
+)
+
+d1 %$% table(age_days, phototherapy) %>% proportions(m = 1) |> round(2)
+
+glm1 = glm(
+  data = d1,
+  family = binomial(link = "identity"),
+  formula = over_thresh == "yes" ~ phototherapy)
+
+glm2 = glm(
+  data = d1,
+  family = binomial(link = "logit"),
+  formula = over_thresh == "yes" ~ phototherapy + male + gest_age*birth_wt + qual_TSB + age_days)
+# 
+# glm2 |>  summary()
+
+```
+
+## Assuming random treatment
+
+```{r}
+
+d1 |> group_by(phototherapy)
+
+```
+
+## adjusting for gestational age
+
+```{r}
+
+d1 %$% table(ga_over37, phototherapy) %>% proportions(m = 1)
+
+glm3 = glm(
+  data = d1,
+  family = binomial(link = "identity"),
+  formula = over_thresh == "yes" ~ phototherapy * ga_over37)
+
+d1 %>% mutate(
+  Y1 = predict(glm1, type = "response", newdata = data.frame(phototherapy = "yes")),
+  Y0 = predict(glm1, type = "response", newdata = data.frame(phototherapy = "no")),
+  Y1.2 = predict(glm2, type = "response", newdata = d1 |> mutate(phototherapy = "yes")),
+  Y0.2 = predict(glm2, type = "response", newdata = d1 |> mutate(phototherapy = "no")),
+  Y1.3 = predict(glm3, type = "response", newdata = data.frame(phototherapy = "yes", ga_over37 = ga_over37)),
+  Y0.3 = predict(glm3, type = "response", newdata = data.frame(phototherapy = "no", ga_over37 = ga_over37))
+) %>%
+  dplyr::summarize(
+    EY1 = mean(Y1),
+    EY0 = mean(Y0),
+    EY0.2 = mean(Y0.2),
+    EY1.2 = mean(Y1.2),
+    EY1.3 = mean(Y1.3),
+    EY0.3 = mean(Y0.3)
+  ) %>%
+  mutate(`EY1 - EY0` = EY1 - EY0,
+         `EY1.2 - EY0.2` = EY1.2 - EY0.2,
+         `EY1.3 - EY0.3` = EY1.3 - EY0.3
+         ) 
+
+```
+
